@@ -1,0 +1,14 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Maps the Next.js App Router onto Netlify Functions, including server actions.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Storage: on Netlify the document store uses Netlify Blobs, which needs no
+# configuration beyond being on the platform. Locally it falls back to .data/.
+# Override with STORAGE_DRIVER=filesystem|netlify-blobs if you need to force one.
