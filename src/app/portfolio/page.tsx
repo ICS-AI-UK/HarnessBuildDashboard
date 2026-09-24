@@ -1,16 +1,22 @@
 import Link from 'next/link';
 import { PortfolioBars } from '@/components/charts';
 import { Button, Card, EMPTY, Empty, Method, Pill, SeriesDot, fmt, fmtInt } from '@/components/ui';
-import { buildPortfolio, type AverageMode, type PortfolioEntry } from '@/lib/metrics/aggregate';
+import { buildPortfolio, mergeModelMetrics, type AverageMode, type PortfolioEntry } from '@/lib/metrics/aggregate';
 import { getProjectSpan, getRange, listProjects } from '@/lib/queries';
 import { formatDayLong, todayKey } from '@/lib/time';
+import { BurndownPanel } from '@/components/Burndown';
+import { ModelsPanel } from '@/components/Models';
+import { computeBurndown } from '@/lib/metrics/burndown';
+import { getPortfolioSettings } from '@/lib/repo';
+import { getDayMetrics } from '@/lib/queries';
+import { updatePortfolioBalance } from '@/app/actions';
 
 export const dynamic = 'force-dynamic';
 
 export default async function PortfolioPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string; mode?: string }>;
+  searchParams: Promise<{ from?: string; to?: string; mode?: string; balanceSaved?: string }>;
 }) {
   const sp = await searchParams;
   const mode: AverageMode = sp.mode === 'pooled' ? 'pooled' : 'macro';
@@ -53,6 +59,41 @@ export default async function PortfolioPage({
   const rows = buildPortfolio(entries, mode);
   const included = entries.filter((e) => e.included);
   const excluded = entries.filter((e) => !e.included);
+
+  // Estate-wide spend: total credits over the days that actually carry credit
+  // data, rather than an average of per-project averages.
+  const creditValues = included
+    .map((e) => e.metrics.credits)
+    .filter((v): v is number => v !== null);
+  const creditTotal = creditValues.length ? creditValues.reduce((a, b) => a + b, 0) : null;
+  const creditDays = included.reduce((a, e) => a + e.metrics.daysWithCredits, 0);
+
+  // Estate burndown: one balance drawn down by every project's spend, summed
+  // per day so two projects working the same day count once against the pool.
+  const portfolio = await getPortfolioSettings();
+  let estateBurndown = null;
+  if (portfolio.creditBalance !== null && portfolio.creditBalanceAsOf !== null) {
+    const today = todayKey();
+    const perProject = await Promise.all(
+      included.map((e) => getDayMetrics(e.slug, portfolio.creditBalanceAsOf as string, today)),
+    );
+    const byDay = new Map<string, number | null>();
+    for (const series of perProject) {
+      for (const d of series) {
+        if (d.credits === null) continue;
+        byDay.set(d.day, (byDay.get(d.day) ?? 0) + d.credits);
+      }
+    }
+    const combined = [...byDay.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([day, credits]) => ({ day, credits, activeDays: 1 }) as never);
+    estateBurndown = computeBurndown({
+      balance: portfolio.creditBalance,
+      asOf: portfolio.creditBalanceAsOf,
+      days: combined,
+      today,
+    });
+  }
 
   const qs = (m: AverageMode) => `/portfolio?from=${from}&to=${to}&mode=${m}`;
 
@@ -193,7 +234,9 @@ export default async function PortfolioPage({
 
       <div className="grid gap-6 md:grid-cols-2">
         {rows
-          .filter((r) => ['medianCycleMin', 'stepLatencyS', 'interruptionRate', 'unrecordedRate'].includes(r.key))
+          .filter((r) =>
+            ['creditsPerActiveDay', 'creditsPerCycle', 'medianCycleMin', 'interruptionRate'].includes(r.key),
+          )
           .map((row) => (
             <Card key={row.key} title={row.label} subtitle={`Average ${fmt(row.average, row.dp)}${row.unit && row.unit !== 'r' ? ` ${row.unit}` : ''}`}>
               <PortfolioBars values={row.values} average={row.average} dp={row.dp} unit={row.unit} />
@@ -201,12 +244,73 @@ export default async function PortfolioPage({
           ))}
       </div>
 
+      <Card
+        title="Account credit balance"
+        subtitle="One pool covering every project. Used for the estate burndown below."
+      >
+        {sp.balanceSaved && (
+          <div className="mb-3">
+            <Pill tone="good">Balance saved</Pill>
+          </div>
+        )}
+        <form action={updatePortfolioBalance} className="flex flex-wrap items-end gap-3">
+          <label className="block">
+            <span className="mb-1 block text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
+              Credits remaining
+            </span>
+            <input
+              type="number"
+              name="creditBalance"
+              step="0.01"
+              min={0}
+              defaultValue={portfolio.creditBalance ?? ''}
+              placeholder="e.g. 250000"
+              className="w-56"
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
+              True as of
+            </span>
+            <input type="date" name="creditBalanceAsOf" defaultValue={portfolio.creditBalanceAsOf ?? ''} />
+          </label>
+          <Button type="submit" variant="primary">
+            Save balance
+          </Button>
+        </form>
+        <Method>
+          Leave the amount blank to turn the estate projection off. Individual projects can carry
+          their own balance in project settings, for pools that are billed separately.
+        </Method>
+      </Card>
+
+      <BurndownPanel
+        burndown={estateBurndown}
+        scope={`All ${included.length} tracked project${included.length === 1 ? '' : 's'}`}
+        settingsHref="/portfolio"
+      />
+
+      {/* Models across the estate: each project's per-day tallies merged, so a
+          day worked in two projects shows both projects' models stacked. */}
+      <ModelsPanel
+        metrics={mergeModelMetrics(included.map((e) => e.metrics))}
+        scope={`All ${included.length} tracked project${included.length === 1 ? '' : 's'}`}
+      />
+
       <Card title="Totals across the portfolio" subtitle="Sums, not averages.">
-        <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-6">
           {[
             ['Cycles', fmtInt(included.reduce((a, e) => a + e.metrics.cycles, 0))],
             ['Reasoning steps', fmtInt(included.reduce((a, e) => a + e.metrics.reasoningSteps, 0))],
             ['Active days', fmtInt(included.reduce((a, e) => a + e.metrics.activeDays, 0))],
+            [
+              'Credits spent',
+              creditTotal === null ? EMPTY : fmt(creditTotal, 0),
+            ],
+            [
+              'Credits per day, all projects',
+              creditDays > 0 && creditTotal !== null ? fmt(creditTotal / creditDays, 0) : EMPTY,
+            ],
             ['Platform errors', fmtInt(included.reduce((a, e) => a + e.metrics.platformErrors, 0))],
           ].map(([label, value]) => (
             <div key={label}>

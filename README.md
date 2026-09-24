@@ -68,17 +68,32 @@ project counting once) and *pooled* (recomputed over every cycle). Pooled median
 combined cycle set rather than averaging medians; macro averages the per-project medians and says
 so. Projects below their minimum cycle count are excluded and listed.
 
+**Credit spend and models** — exports that price their messages (`(1.23 credits)` on each header)
+and name their model (`[claude-opus-5]`) are parsed for both. You get spend per day, per cycle and
+per reasoning step, split by role and by model, on each project and across the portfolio. Per-message
+figures are costs, not a running total, and they are reconciled against the export's own declared
+daily totals.
+
+**Credit burndown** — state a balance and the date it was true, and each project shows its own
+burndown; the portfolio shows a combined one against a single account-wide balance. Runway is quoted
+in calendar days, using the working cadence actually observed, because a team working three days a
+week burns a balance at a different calendar rate than one working five.
+
 ## Metrics
 
 Cycle count and duration percentiles, reasoning steps, minutes per step, step latency, the
 elapsed-day partition, dispatch-length and work-size correlations, mid-work operator interruptions,
-unrecorded authorisations, and language drift. Definitions are in [`SPEC.md`](SPEC.md) §5.
+unrecorded authorisations, language drift, credit spend, credit burndown and model usage.
+Definitions are in [`SPEC.md`](SPEC.md) §5.
 
 Conventions applied throughout: R-7 percentiles; Pearson *r* suppressed below n = 8 or when a
 variable is constant; empty sets render as `—` rather than `0`; open cycles counted but excluded
 from duration figures, and measured only up to the next dispatch; a cycle that crosses midnight
 counted wholly on the day it began — except in the elapsed-day partition, which clips at midnight so
 its bands sum to each day's window.
+
+A figure that the transcripts do not record reads as `—`, never as zero: an export without credit
+data means spend is unknown, not free.
 
 No model is involved in any figure or insight. Everything is reproducible from the transcript alone.
 
@@ -88,7 +103,7 @@ No model is involved in any figure or insight. Everything is reproducible from t
 src/lib/store/      document store: Netlify Blobs or the local filesystem
 src/lib/repo.ts     documents in, domain objects out; day rebuilds
 src/lib/parser/     scan → language → cycle resolution → pipeline (pure, no I/O)
-src/lib/metrics/    statistics, day slices, per-day computation, aggregation
+src/lib/metrics/    statistics, day slices, per-day computation, aggregation, burndown
 src/lib/overlap.ts  per-day overlap classification
 src/lib/ingest.ts   analyse (dry run), commit, re-parse for evidence
 src/app/            pages and API routes

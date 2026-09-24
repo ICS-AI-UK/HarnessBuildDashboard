@@ -6,6 +6,7 @@ import {
   AtAGlance,
   AuditPanel,
   ComplexityPanel,
+  CreditPanel,
   CycleDistribution,
   DriftPanel,
   ElapsedPanel,
@@ -14,9 +15,12 @@ import {
   InterruptionsPanel,
 } from '@/components/Dashboard';
 import { DateRange } from '@/components/DateRange';
+import { ModelsPanel } from '@/components/Models';
+import { BurndownPanel } from '@/components/Burndown';
+import { computeBurndown } from '@/lib/metrics/burndown';
 import { Button, Card, EMPTY, Empty, Pill, SeriesDot, fmt, fmtInt } from '@/components/ui';
 import { getProject, listTranscripts, type Project } from '@/lib/repo';
-import { getCalendar, getProjectSpan, getRange } from '@/lib/queries';
+import { getCalendar, getDayMetrics, getProjectSpan, getRange } from '@/lib/queries';
 import { addMonths, formatDayLong, monthBounds, todayKey } from '@/lib/time';
 
 export const dynamic = 'force-dynamic';
@@ -57,6 +61,19 @@ export default async function ProjectPage({
     getCalendar(mFrom, mTo, project),
     getCalendar(`${addMonths(month, -11)}-01`, mTo, project),
   ]);
+
+  // The burndown runs over every day held, not the selected range: a balance
+  // is drawn down by all spend since its date, whatever the dashboard is showing.
+  const allDays = await getDayMetrics(slug, span.from, todayKey(project.timezone) > span.to ? todayKey(project.timezone) : span.to);
+  const burndown =
+    project.creditBalance !== null && project.creditBalanceAsOf !== null
+      ? computeBurndown({
+          balance: project.creditBalance,
+          asOf: project.creditBalanceAsOf,
+          days: allDays,
+          today: todayKey(project.timezone),
+        })
+      : null;
 
   return (
     <div className="space-y-6">
@@ -105,11 +122,24 @@ export default async function ProjectPage({
               data={metrics.series.map((d) => ({ day: d.day, value: d.stepLatencyS.value }))}
               colour="var(--series-3)"
             />
+            <TrendBlock
+              label="Credits"
+              data={metrics.series.map((d) => ({ day: d.day, value: d.credits }))}
+              colour="var(--series-5)"
+            />
           </div>
         </Card>
       )}
 
       <CycleDistribution metrics={metrics} />
+      <CreditPanel metrics={metrics} colour={project.colour} />
+      <BurndownPanel
+        burndown={burndown}
+        scope={project.name}
+        settingsHref={`/p/${slug}/settings`}
+        colour={project.colour}
+      />
+      <ModelsPanel metrics={metrics} scope={project.name} />
       <ComplexityPanel metrics={metrics} />
       <ElapsedPanel metrics={metrics} />
 

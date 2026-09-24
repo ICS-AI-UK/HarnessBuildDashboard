@@ -16,20 +16,40 @@ export type RawEvent = {
   kind: 'think' | 'message';
   body: string;
   actionCount: number;
+  /** Credits this message cost, when the export records them. */
+  credits: number | null;
+  /** The model that produced it, when the export names one. */
+  model: string | null;
+};
+
+/** The `## Credit usage` block some exports carry, as declared by the platform. */
+export type DeclaredCredits = {
+  total: number | null;
+  byDay: Record<string, number>;
+};
+
+/** The `## Models used` block, as declared by the platform. */
+export type DeclaredModel = {
+  model: string;
+  messages: number;
+  credits: number;
 };
 
 export type ScanResult = {
   transcriptRef: string | null;
   declaredRangeText: string | null;
   declaredMessageCount: number | null;
+  declaredCredits: DeclaredCredits | null;
+  declaredModels: DeclaredModel[] | null;
   events: RawEvent[];
   warnings: ParseWarning[];
 };
 
-// `### <ts> — <Role> (<Account>) [<kind>]`, with the account optional.
+// `### <ts> — <Role> (<Account>) [<kind>] (<n> credits)`, account and credits
+// both optional — exports differ, and an operator's own message costs nothing.
 // The separator is U+2014 EM DASH; never split on ASCII '-'.
 const HEADER_RE =
-  /^###\s+(?<ts>\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:?\d{2}))\s*—\s*(?<role>.+?)\s*(?:\((?<account>[^)]*)\)\s*)?\[(?<kind>think|message)\]\s*$/;
+  /^###\s+(?<ts>\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:?\d{2}))\s*—\s*(?<role>.+?)\s*(?:\((?<account>[^)]*)\)\s*)?\[(?<kind>think|message)\]\s*(?:\(\s*(?<credits>\d+(?:\.\d+)?)\s*credits?\s*\)\s*)?(?:\[(?<model>[^\]]+)\]\s*)?$/;
 
 const FENCE_RE = /^\s*(```|~~~)/;
 const ACTION_RE = /^>\s*\[action\]\s*$/;
@@ -56,6 +76,10 @@ export function scanTranscript(text: string): ScanResult {
   let transcriptRef: string | null = null;
   let declaredRangeText: string | null = null;
   let declaredMessageCount: number | null = null;
+  let declaredCreditTotal: number | null = null;
+  const declaredCreditsByDay: Record<string, number> = {};
+  const declaredModelRows: DeclaredModel[] = [];
+  let block: 'none' | 'credits' | 'models' = 'none';
 
   let inFence = false;
   let fenceToken = '';
@@ -85,6 +109,8 @@ export function scanTranscript(text: string): ScanResult {
       kind: g.kind as 'think' | 'message',
       body,
       actionCount,
+      credits: g.credits === undefined ? null : Number(g.credits),
+      model: g.model?.trim() || null,
     });
     current = null;
   };
@@ -123,10 +149,48 @@ export function scanTranscript(text: string): ScanResult {
     if (!sawHeader) {
       const ref = line.match(/^#\s*Chat transcript:\s*(\S+)/i);
       if (ref) transcriptRef = ref[1];
+
+      // `Messages from <date|range> — N messages`
       const declared = line.match(/^Messages from\s+(.+?)(?:\s*—\s*(\d[\d,]*)\s+messages?)?\s*$/i);
       if (declared) {
         declaredRangeText = declared[1].trim();
         if (declared[2]) declaredMessageCount = Number(declared[2].replace(/,/g, ''));
+      }
+
+      // `Exported <timestamp> — N messages` (a different export's wording).
+      // The export time says nothing about which days the file covers, so it is
+      // not treated as a range — only the message count is taken.
+      const exported = line.match(/^Exported\s+(\S+)\s*—\s*(\d[\d,]*)\s+messages?\s*$/i);
+      if (exported) {
+        declaredMessageCount = Number(exported[2].replace(/,/g, ''));
+      }
+
+      // Preamble blocks: `## Credit usage` (a total, then `| Date | Credits |`)
+      // and `## Models used` (`| Model | Messages | Credits |`).
+      if (/^##\s*Credit usage/i.test(line)) block = 'credits';
+      else if (/^##\s*Models used/i.test(line)) block = 'models';
+      else if (/^##\s/.test(line)) block = 'none';
+
+      if (block === 'credits') {
+        const total = line.match(/^Total:\s*([\d,]+(?:\.\d+)?)\s*credits?/i);
+        if (total) declaredCreditTotal = Number(total[1].replace(/,/g, ''));
+
+        const row = line.match(/^\|\s*(\d{4}-\d{2}-\d{2})\s*\|\s*([\d,]+(?:\.\d+)?)\s*\|/);
+        if (row) declaredCreditsByDay[row[1]] = Number(row[2].replace(/,/g, ''));
+      }
+
+      if (block === 'models') {
+        const row = line.match(
+          /^\|\s*([^|\s][^|]*?)\s*\|\s*([\d,]+)\s*\|\s*([\d,]+(?:\.\d+)?)\s*\|/,
+        );
+        // Skip the header row and the `| --- |` separator.
+        if (row && !/^-+$/.test(row[1]) && !/^model$/i.test(row[1])) {
+          declaredModelRows.push({
+            model: row[1],
+            messages: Number(row[2].replace(/,/g, '')),
+            credits: Number(row[3].replace(/,/g, '')),
+          });
+        }
       }
     }
   }
@@ -139,12 +203,27 @@ export function scanTranscript(text: string): ScanResult {
     });
   }
 
+  const declaredCredits: DeclaredCredits | null =
+    declaredCreditTotal === null && Object.keys(declaredCreditsByDay).length === 0
+      ? null
+      : { total: declaredCreditTotal, byDay: declaredCreditsByDay };
+
+  const declaredModels: DeclaredModel[] | null = declaredModelRows.length ? declaredModelRows : null;
+
   if (events.length === 0) {
     warnings.push({
       code: 'no-events',
       message: 'No event headers matched. Is this a transcript export?',
     });
-    return { transcriptRef, declaredRangeText, declaredMessageCount, events, warnings };
+    return {
+      transcriptRef,
+      declaredRangeText,
+      declaredMessageCount,
+      declaredCredits,
+      declaredModels,
+      events,
+      warnings,
+    };
   }
 
   // Timestamps out of order: sort by time, keep original order as the tiebreak.
@@ -172,6 +251,8 @@ export function scanTranscript(text: string): ScanResult {
     transcriptRef,
     declaredRangeText,
     declaredMessageCount,
+    declaredCredits,
+    declaredModels,
     events: ordered,
     warnings,
   };

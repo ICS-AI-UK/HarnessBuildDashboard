@@ -38,6 +38,8 @@ function project(slug: string) {
     answerThreshold: 600,
     minCyclesForAverage: 5,
     roleMap: {},
+    creditBalance: null,
+    creditBalanceAsOf: null,
     archivedAt: null,
     createdAt: now,
     updatedAt: now,

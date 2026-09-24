@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Card, EMPTY, Figure, Method, Pill, fmt, fmtInt, fmtR, fmtStat } from './ui';
-import { CorrelationScatter, DurationHistogram, ElapsedBar } from './charts';
+import { CorrelationScatter, DayTrend, DurationHistogram, ElapsedBar } from './charts';
 import { buildInsights, type InsightContext } from '@/lib/insights';
 import { languageName } from '@/lib/parser/language';
 import { formatClock, formatDayLong } from '@/lib/time';
@@ -35,9 +35,21 @@ export function HeadlineStrip({
           Working hours {windowLabel(metrics, timezone)}
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-5">
         <Figure value={fmtInt(metrics.cycles)} label="Cycles" size="lg" note={metrics.openCycles ? `${metrics.openCycles} still open` : undefined} />
         <Figure value={fmtInt(metrics.reasoningSteps)} label="Reasoning steps" size="lg" />
+        <Figure
+          value={metrics.credits === null ? EMPTY : fmt(metrics.credits, 0)}
+          label="Credits"
+          size="lg"
+          note={
+            metrics.credits === null
+              ? 'not recorded in these transcripts'
+              : metrics.creditsPerActiveDay.value === null
+                ? undefined
+                : `${fmt(metrics.creditsPerActiveDay.value, 0)}/day average`
+          }
+        />
         <Figure
           value={fmtInt(metrics.platformErrors)}
           label="Platform errors"
@@ -76,6 +88,9 @@ export function AtAGlance({ metrics }: { metrics: RangeMetrics }) {
     ['Step latency, median', fmtStat(metrics.stepLatencyS, 1, 's')],
     ['Platform errors', fmtInt(metrics.platformErrors)],
     ['Mid-work operator answers', fmtInt(metrics.operatorAnswers)],
+    ['Credits spent', metrics.credits === null ? EMPTY : fmt(metrics.credits, 0)],
+    ['Credits per day', fmtStat(metrics.creditsPerActiveDay, 0)],
+    ['Credits per cycle', fmtStat(metrics.creditsPerCycle, 1)],
   ];
   return (
     <Card title="At a glance" subtitle={periodLabel(metrics)}>
@@ -195,6 +210,157 @@ export function ComplexityPanel({ metrics }: { metrics: RangeMetrics }) {
       </div>
       <Method>
         Pearson r, suppressed below n = 8 or when either variable is constant. Open cycles excluded.
+      </Method>
+    </Card>
+  );
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  operator: 'Operator',
+  orchestrator: 'Orchestrator',
+  worker: 'Worker',
+};
+
+/** Credit spend (SPEC.md §5.11). */
+export function CreditPanel({
+  metrics,
+  colour = 'var(--series-4)',
+}: {
+  metrics: RangeMetrics;
+  colour?: string;
+}) {
+  // A transcript without credit data must read as unknown, never as free.
+  if (metrics.credits === null) {
+    return (
+      <Card id="credits" title="Credit spend" subtitle={periodSpan(metrics)}>
+        <p className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+          None of the transcripts in this period record credit usage, so spend is unknown rather
+          than zero. Exports that carry it show a{' '}
+          <code className="mono">(1.23 credits)</code> suffix on each message.
+        </p>
+      </Card>
+    );
+  }
+
+  const perDay = metrics.series.map((d) => ({ day: d.day, value: d.credits }));
+  const roleTotal = Object.values(metrics.creditsByRole).reduce((a, b) => a + b, 0);
+  const roles = Object.entries(metrics.creditsByRole).sort((a, b) => b[1] - a[1]);
+
+  // The export declares its own daily totals; ours are summed from per-message
+  // figures rounded to 2dp, so a small gap is expected and a large one is not.
+  const declared = metrics.declaredCredits;
+  const drift = declared !== null ? Math.abs(declared - metrics.credits) : null;
+  const driftPct = declared !== null && declared > 0 ? (drift! / declared) * 100 : null;
+  const reconciles = driftPct === null || driftPct < 1;
+
+  return (
+    <Card
+      id="credits"
+      title="Credit spend"
+      subtitle={`${periodSpan(metrics)} · ${metrics.daysWithCredits} day${metrics.daysWithCredits === 1 ? '' : 's'} with credit data`}
+    >
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        <Figure value={fmt(metrics.credits, 0)} label="Total credits" size="lg" />
+        <Figure
+          value={fmtStat(metrics.creditsPerActiveDay, 0)}
+          label="Average per day"
+          note={`over ${metrics.creditsPerActiveDay.n} day${metrics.creditsPerActiveDay.n === 1 ? '' : 's'}`}
+        />
+        <Figure
+          value={fmtStat(metrics.medianDailyCredits, 0)}
+          label="Median day"
+          note="half of days cost less than this"
+        />
+        <Figure
+          value={fmtStat(metrics.creditsPerCycle, 1)}
+          label="Per cycle"
+          note={metrics.creditsPerStep.value === null ? undefined : `${fmtStat(metrics.creditsPerStep, 2)} per reasoning step`}
+        />
+      </div>
+
+      {metrics.daysWithCredits > 1 && (
+        <div className="mt-6">
+          <p className="mb-1 text-[12.5px] font-medium" style={{ color: 'var(--text-muted)' }}>
+            Credits per day
+          </p>
+          <DayTrend data={perDay} label="Credits" colour={colour} kind="bar" />
+        </div>
+      )}
+
+      {roles.length > 0 && roleTotal > 0 && (
+        <div className="mt-6">
+          <p className="mb-2 text-[12.5px] font-medium" style={{ color: 'var(--text-muted)' }}>
+            Where the spend goes
+          </p>
+          <div
+            className="flex h-7 w-full overflow-hidden rounded-md"
+            style={{ border: '1px solid var(--border)' }}
+            role="img"
+            aria-label={roles
+              .map(([r, v]) => `${ROLE_LABELS[r] ?? r}: ${Math.round(v)} credits`)
+              .join('; ')}
+          >
+            {roles.map(([role, v], i) => (
+              <div
+                key={role}
+                title={`${ROLE_LABELS[role] ?? role}: ${Math.round(v)} credits`}
+                style={{ width: `${(v / roleTotal) * 100}%`, background: `var(--series-${i + 1})` }}
+              />
+            ))}
+          </div>
+          <ul className="mt-2.5 flex flex-wrap gap-x-5 gap-y-1.5 text-[12.5px]">
+            {roles.map(([role, v], i) => (
+              <li key={role} className="flex items-center gap-1.5">
+                <span
+                  aria-hidden
+                  className="inline-block h-2.5 w-2.5 rounded-sm"
+                  style={{ background: `var(--series-${i + 1})` }}
+                />
+                <span style={{ color: 'var(--text-muted)' }}>{ROLE_LABELS[role] ?? role}</span>
+                <span className="num font-medium">
+                  {fmt(v, 0)} ({Math.round((v / roleTotal) * 100)}%)
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {metrics.costliestDay && metrics.daysWithCredits > 1 && (
+        <p className="mt-5 text-[13px]" style={{ color: 'var(--text-muted)' }}>
+          The costliest day was{' '}
+          <strong style={{ color: 'var(--text)' }}>{formatDayLong(metrics.costliestDay.day)}</strong>{' '}
+          at {fmt(metrics.costliestDay.credits, 0)} credits
+          {metrics.creditsPerActiveDay.value !== null && (
+            <>
+              {' '}
+              &mdash; {fmt(metrics.costliestDay.credits / metrics.creditsPerActiveDay.value, 1)}&times;
+              the daily average
+            </>
+          )}
+          .
+        </p>
+      )}
+
+      <Method>
+        Summed from the per-message credit figures the export records; operator messages cost
+        nothing and are excluded. Averages divide by the days that actually carry credit data
+        ({metrics.daysWithCredits} of {metrics.activeDays} active), not by the whole range.
+        {declared !== null && (
+          <>
+            {' '}
+            The export declares {fmt(declared, 2)} credits for this period against {fmt(metrics.credits, 2)} summed here
+            {reconciles ? (
+              <> &mdash; a rounding difference of {fmt(drift, 2)}.</>
+            ) : (
+              <>
+                {' '}
+                &mdash; a gap of {fmt(drift, 2)} ({fmt(driftPct, 1)}%), which is larger than rounding
+                explains.
+              </>
+            )}
+          </>
+        )}
       </Method>
     </Card>
   );
@@ -425,6 +591,7 @@ export function CycleTable({
               <th className="pb-2 text-right font-medium">Steps</th>
               <th className="pb-2 text-right font-medium">Dispatch chars</th>
               <th className="pb-2 text-right font-medium">Min/step</th>
+              <th className="pb-2 text-right font-medium">Credits</th>
             </tr>
           </thead>
           <tbody>
@@ -459,6 +626,9 @@ export function CycleTable({
                   </td>
                   <td className="num py-1.5 text-right" style={{ color: 'var(--text-muted)' }}>
                     {c.durationMin !== null && c.steps > 0 ? fmt(c.durationMin / c.steps, 2) : EMPTY}
+                  </td>
+                  <td className="num py-1.5 text-right font-medium">
+                    {c.credits === null ? EMPTY : fmt(c.credits, 1)}
                   </td>
                 </tr>
               );

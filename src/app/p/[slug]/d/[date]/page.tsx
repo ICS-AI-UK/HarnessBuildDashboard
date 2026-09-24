@@ -4,6 +4,7 @@ import {
   AtAGlance,
   AuditPanel,
   ComplexityPanel,
+  CreditPanel,
   CycleDistribution,
   CycleTable,
   DriftPanel,
@@ -13,6 +14,7 @@ import {
   InterruptionsPanel,
 } from '@/components/Dashboard';
 import { Button, Card, Empty, Pill } from '@/components/ui';
+import { ModelsPanel } from '@/components/Models';
 import { getDay, getProject, listTranscripts } from '@/lib/repo';
 import { getRange } from '@/lib/queries';
 import { formatDayLong, nextDay, prevDay } from '@/lib/time';
@@ -95,7 +97,9 @@ export default async function DayPage({
             <CycleDistribution metrics={metrics} />
           </div>
 
-          <ComplexityPanel metrics={metrics} />
+          <CreditPanel metrics={metrics} colour={project.colour} />
+          <ModelsPanel metrics={metrics} scope={project.name} />
+      <ComplexityPanel metrics={metrics} />
           <ElapsedPanel metrics={metrics} />
 
           <div className="grid gap-6 lg:grid-cols-2">

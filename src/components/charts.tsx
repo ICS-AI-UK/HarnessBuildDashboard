@@ -313,6 +313,137 @@ export function PortfolioBars({
   );
 }
 
+/**
+ * Which model was used each day, stacked. Message counts and credits are
+ * different questions — a cheap model can dominate the message count while
+ * costing almost nothing — so the measure is switchable rather than assumed.
+ */
+export function ModelsByDay({
+  data,
+  models,
+  measure,
+}: {
+  data: Array<{ day: string; models: Record<string, { messages: number; credits: number }> }>;
+  models: string[];
+  measure: 'messages' | 'credits';
+}) {
+  if (data.length === 0 || models.length === 0) return null;
+
+  const rows = data.map((d) => {
+    const row: Record<string, string | number> = { day: d.day.slice(5), full: d.day };
+    for (const m of models) row[m] = d.models[m]?.[measure] ?? 0;
+    return row;
+  });
+
+  return (
+    <div style={{ width: '100%', height: 230 }}>
+      <ResponsiveContainer>
+        <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+          <CartesianGrid stroke="var(--grid)" vertical={false} />
+          <XAxis dataKey="day" tick={AXIS} tickLine={false} axisLine={{ stroke: 'var(--border)' }} minTickGap={16} />
+          <YAxis tick={AXIS} tickLine={false} axisLine={false} width={58} />
+          <Tooltip
+            cursor={{ fill: 'var(--surface-2)' }}
+            content={({ active, payload }) => {
+              if (!active || !payload?.length) return null;
+              const day = String(payload[0].payload.full);
+              const rowsOut: Array<[string, string]> = [['Day', day]];
+              for (const p of payload) {
+                const v = Number(p.value);
+                if (v > 0) rowsOut.push([String(p.dataKey), v.toLocaleString(undefined, { maximumFractionDigits: measure === 'credits' ? 0 : 0 })]);
+              }
+              return <TooltipBox rows={rowsOut} />;
+            }}
+          />
+          {models.map((m, i) => (
+            <Bar
+              key={m}
+              dataKey={m}
+              stackId="models"
+              fill={`var(--series-${(i % 6) + 1})`}
+              radius={i === models.length - 1 ? [3, 3, 0, 0] : undefined}
+              isAnimationActive={false}
+            />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/**
+ * Credit burndown: actual spend so far as a solid line, the projection beyond
+ * today dashed, so a forecast is never mistaken for a measurement.
+ */
+export function BurndownChart({
+  series,
+  colour = 'var(--series-5)',
+}: {
+  series: Array<{ day: string; remaining: number; kind: 'actual' | 'projected' }>;
+  colour?: string;
+}) {
+  if (series.length < 2) return null;
+
+  const lastActual = series.filter((p) => p.kind === 'actual').at(-1);
+  // The projection repeats the final actual point so the two lines meet.
+  const rows = series.map((p) => ({
+    day: p.day,
+    label: p.day.slice(5),
+    actual: p.kind === 'actual' ? p.remaining : null,
+    projected:
+      p.kind === 'projected' || (lastActual && p.day === lastActual.day) ? p.remaining : null,
+  }));
+
+  return (
+    <div style={{ width: '100%', height: 220 }}>
+      <ResponsiveContainer>
+        <LineChart data={rows} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
+          <CartesianGrid stroke="var(--grid)" vertical={false} />
+          <XAxis dataKey="label" tick={AXIS} tickLine={false} axisLine={{ stroke: 'var(--border)' }} minTickGap={22} />
+          <YAxis tick={AXIS} tickLine={false} axisLine={false} width={56} />
+          <Tooltip
+            cursor={{ strokeDasharray: '3 3', stroke: 'var(--border-strong)' }}
+            content={({ active, payload }) => {
+              if (!active || !payload?.length) return null;
+              const p = payload[0].payload as { day: string; actual: number | null; projected: number | null };
+              const value = p.actual ?? p.projected;
+              if (value === null) return null;
+              return (
+                <TooltipBox
+                  rows={[
+                    ['Day', p.day],
+                    ['Remaining', Math.round(value).toLocaleString()],
+                    ['', p.actual !== null ? 'actual' : 'projected'],
+                  ]}
+                />
+              );
+            }}
+          />
+          <ReferenceLine y={0} stroke="var(--bad)" strokeDasharray="3 3" />
+          <Line
+            dataKey="actual"
+            stroke={colour}
+            strokeWidth={2.25}
+            dot={false}
+            connectNulls={false}
+            isAnimationActive={false}
+          />
+          <Line
+            dataKey="projected"
+            stroke={colour}
+            strokeWidth={2}
+            strokeDasharray="5 4"
+            strokeOpacity={0.65}
+            dot={false}
+            connectNulls
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 export function Sparkline({ data, colour }: { data: Array<{ day: string; cycles: number }>; colour: string }) {
   if (data.length < 2) return null;
   return (

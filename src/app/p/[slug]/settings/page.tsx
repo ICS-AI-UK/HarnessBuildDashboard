@@ -138,6 +138,39 @@ export default async function SettingsPage({
           </div>
         </Card>
 
+        <Card
+          title="Credit balance"
+          subtitle="Used for the burndown. Optional — leave blank to turn the projection off."
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Label text="Credits remaining">
+              <input
+                type="number"
+                name="creditBalance"
+                step="0.01"
+                min={0}
+                defaultValue={project.creditBalance ?? ''}
+                placeholder="e.g. 250000"
+                className="w-full"
+              />
+            </Label>
+            <Label text="True as of">
+              <input
+                type="date"
+                name="creditBalanceAsOf"
+                defaultValue={project.creditBalanceAsOf ?? ''}
+                className="w-full"
+              />
+            </Label>
+          </div>
+          <Method>
+            Spend recorded on or after that date is subtracted from the balance, and the remainder is
+            projected forward at the rate actually observed. Update the balance whenever you top up
+            or check the real figure &mdash; the projection is only as good as the date it starts from.
+            An account-wide balance covering every project is set on the portfolio page.
+          </Method>
+        </Card>
+
         <div className="flex gap-2">
           <Button type="submit" variant="primary">
             Save

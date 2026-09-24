@@ -79,11 +79,43 @@ The filename may also carry a date (`chat-<ref>-2026-09-21.md`). This is treated
 displayed, never trusted. A file named for one day but containing a week of events is imported as a
 week.
 
+**Preamble blocks.** Newer exports carry two summary tables before the first event:
+
+```
+Exported 2026-09-24T16:21:31.469Z — 1022 messages
+
+## Credit usage
+Total: 15543.87 credits
+
+| Date | Credits |
+| --- | --- |
+| 2026-09-23 | 6815.31 |
+
+## Models used
+
+| Model | Messages | Credits |
+| --- | --- | --- |
+| claude-opus-5 | 931 | 15543.87 |
+```
+
+Both are **declared** figures: recorded, displayed and reconciled against, but
+never authoritative. `Exported <timestamp>` states when the file was written and
+says nothing about the days it covers, so unlike `Messages from …` it is not
+read as a range.
+
 **Event header grammar:**
 
 ```
-### <ISO-8601 timestamp> — <Role> (<Account>) [<kind>]
+### <ISO-8601 timestamp> — <Role> (<Account>) [<kind>] (<n> credits) [<model>]
 ```
+
+The account, the credit suffix and the model suffix are each **optional** and
+appear in that order. Exports differ between versions, an operator's own message
+costs nothing so carries no credits, and older exports name no model at all. A
+pattern anchored on the kind silently drops every priced message: when that
+happened here, 81 of 921 events survived and an entire role disappeared, so the
+grammar is tested against both an export that carries these suffixes and one
+that does not.
 
 - `<timestamp>` — RFC 3339, microsecond precision, `Z`-suffixed (UTC).
 - `—` — U+2014 EM DASH, space-padded. Parsers must not split on ASCII `-`.
@@ -415,6 +447,76 @@ justification citing its own numbers, and a link to the evidence. Seed rules:
 Rules live in a config file, not in component code. No LLM is involved — figures on this dashboard
 must be reproducible from the transcript alone.
 
+---
+
+### 5.11 Credit spend
+
+Exports that price their messages carry `(n credits)` on each header. These are **per-message costs,
+not a running total** — the early rise in a conversation is context growing, not an accumulator — and
+they sum to the platform's own daily figures. Summing a cumulative series instead would overstate a
+day by orders of magnitude, so the two are told apart by checking the sum against the declared table.
+
+| Metric | Definition |
+|---|---|
+| **Credits** | Σ recorded credits. `null`, not `0`, when no event carries them |
+| **Credits per day** | Total ÷ **days that carry credit data**, not days in range |
+| **Median day** | Median of the daily totals (R-7) |
+| **Credits per cycle** | Total ÷ cycles on credit-bearing days |
+| **Credits per reasoning step** | Total ÷ steps on credit-bearing days |
+| **Spend by role** | Credits grouped by role class — operator turns are free |
+| **Costliest day** | The highest daily total, and its multiple of the average |
+
+Averages divide by credit-bearing days deliberately: spreading a fortnight's spend over thirty
+calendar days understates the rate a team is actually burning at.
+
+**Reconciliation.** Per-message figures are rounded to 2 dp, so summing hundreds of them drifts from
+the declared daily total by a few hundredths. The panel states both and calls a gap under 1% what it
+is — rounding — while saying plainly when it is larger than rounding explains.
+
+**An export without credits reads as unknown, not free.** Every derived rate is suppressed rather
+than dividing by nothing, and the panel says the transcripts do not record spend.
+
+### 5.12 Credit burndown
+
+A stated balance, drawn down by recorded spend and projected forward.
+
+The projection separates two rates, because conflating them is the easy way to be wrong by a factor
+of two:
+
+- **Per active day** — what a working day costs.
+- **Per calendar day** — that rate scaled by how often days are worked.
+
+A team spending 7,500 credits on each of nine days in a fortnight is burning ~4,800 a calendar day,
+not 7,500. **Runway is quoted in calendar days**, since that is what a date on a budget means, and
+the working cadence it assumes is stated alongside it.
+
+| Field | Derivation |
+|---|---|
+| `spentSinceAsOf` | Σ credits on days ≥ the balance date. Earlier spend is already reflected in the stated figure |
+| `remainingNow` | `balance − spentSinceAsOf` |
+| `activeDayDensity` | credit-bearing days ÷ calendar days since the balance date |
+| `exhaustionDate` | Projected forward one calendar day at a time, so the line lands on a real date |
+
+States: `ok`, `exhausted` (spend already exceeds the balance — reported, never projected into the
+negative), `no-rate`, `no-data`. The chart draws recorded spend solid and the projection dashed, so a
+forecast is never mistaken for a measurement.
+
+**Scope.** Each project carries its own optional balance and shows its own burndown. The portfolio
+carries one account-wide balance and shows a combined burndown, summing every project's spend per
+day against the single pool.
+
+### 5.13 Models used
+
+Exports that name a model carry it in brackets at the end of each header, and list totals in a
+`## Models used` block.
+
+Per day, and over a range, the app tallies **messages and credits separately per model**, because
+they disagree: on the sample, one model accounts for 3% of messages and 0% of spend. Message counts
+include the operator's free turns; credits do not. The chart stacks models per day, with the measure
+switchable between messages and credits.
+
+`primaryModel` is the model producing the most messages that day. An export naming no model yields
+an empty tally rather than a fabricated one.
 ---
 
 ## 6. Features

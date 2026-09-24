@@ -39,6 +39,8 @@ export async function POST(request: Request) {
     answerThreshold: Number(body.answerThreshold ?? 600),
     minCyclesForAverage: Number(body.minCyclesForAverage ?? 5),
     roleMap: {},
+    creditBalance: body.creditBalance === undefined ? null : Number(body.creditBalance),
+    creditBalanceAsOf: body.creditBalanceAsOf ? String(body.creditBalanceAsOf) : null,
     archivedAt: null,
     createdAt: now,
     updatedAt: now,

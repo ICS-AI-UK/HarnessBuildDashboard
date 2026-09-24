@@ -43,6 +43,19 @@ export type RangeMetrics = {
   stepsVsDuration: Stat;
   dispatchCharsMin: number | null;
   dispatchCharsMax: number | null;
+  // Credit spend
+  credits: number | null;
+  declaredCredits: number | null;
+  creditsByRole: Record<string, number>;
+  creditsPerActiveDay: Stat;
+  creditsPerCycle: Stat;
+  creditsPerStep: Stat;
+  medianDailyCredits: Stat;
+  costliestDay: { day: string; credits: number } | null;
+  daysWithCredits: number;
+  // Models
+  modelUsage: Record<string, { messages: number; credits: number }>;
+  modelsByDay: Array<{ day: string; models: Record<string, { messages: number; credits: number }> }>;
   elapsed: ElapsedPartition;
   windowsByDay: Array<{ day: string; start: string | null; end: string | null }>;
   series: DayMetrics[];
@@ -123,6 +136,8 @@ export function aggregateRange(from: string, to: string, days: DayMetrics[]): Ra
       ? Math.max(...active.map((d) => d.dispatchCharsMax ?? -Infinity))
       : null,
 
+    ...creditTotals(active),
+
     // Each day's bands are summed. Overnight gaps never enter, because each
     // day's window bounds its own bands (SPEC.md §5.5).
     elapsed: {
@@ -133,6 +148,113 @@ export function aggregateRange(from: string, to: string, days: DayMetrics[]): Ra
     },
     windowsByDay: active.map((d) => ({ day: d.day, start: d.windowStart, end: d.windowEnd })),
     series: days,
+  };
+}
+
+/**
+ * Credit spend over a range.
+ *
+ * Every figure here divides by the days that actually recorded credits, not by
+ * the range: averaging a fortnight's spend over thirty days would understate it,
+ * and a transcript with no credit data must read as unknown rather than free.
+ */
+function creditTotals(active: DayMetrics[]) {
+  // `!= null` deliberately: documents written before credit tracking have the
+  // key missing rather than null, and undefined must read the same as "not
+  // recorded" rather than sneaking through as a number.
+  const withCredits = active.filter((d) => d.credits != null);
+  const values = withCredits.map((d) => d.credits as number);
+  const total = values.length ? sum(values) : null;
+
+  const declared = active.filter((d) => d.declaredCredits != null);
+  const cyclesOnCreditDays = sum(withCredits.map((d) => d.cycles));
+  const stepsOnCreditDays = sum(withCredits.map((d) => d.reasoningSteps));
+
+  const costliest = withCredits.length
+    ? withCredits.reduce((a, b) => ((b.credits as number) > (a.credits as number) ? b : a))
+    : null;
+
+  return {
+    credits: total,
+    declaredCredits: declared.length ? sum(declared.map((d) => d.declaredCredits as number)) : null,
+    creditsByRole: withCredits.reduce<Record<string, number>>((acc, d) => {
+      for (const [k, v] of Object.entries(d.creditsByRole ?? {})) acc[k] = (acc[k] ?? 0) + v;
+      return acc;
+    }, {}),
+    creditsPerActiveDay: stat(
+      total !== null && values.length ? total / values.length : null,
+      values.length,
+      'total credits / days with credit data',
+    ),
+    creditsPerCycle: stat(
+      total !== null && cyclesOnCreditDays > 0 ? total / cyclesOnCreditDays : null,
+      cyclesOnCreditDays,
+      'total credits / cycles on those days',
+    ),
+    creditsPerStep: stat(
+      total !== null && stepsOnCreditDays > 0 ? total / stepsOnCreditDays : null,
+      stepsOnCreditDays,
+      'total credits / reasoning steps on those days',
+    ),
+    medianDailyCredits: stat(median(values), values.length, 'median of daily totals (R-7)'),
+    costliestDay: costliest ? { day: costliest.day, credits: costliest.credits as number } : null,
+    daysWithCredits: values.length,
+
+    modelUsage: active.reduce<Record<string, { messages: number; credits: number }>>((acc, d) => {
+      for (const [k, v] of Object.entries(d.modelUsage ?? {})) {
+        const row = (acc[k] ??= { messages: 0, credits: 0 });
+        row.messages += v.messages;
+        row.credits += v.credits;
+      }
+      return acc;
+    }, {}),
+    modelsByDay: active
+      .filter((d) => Object.keys(d.modelUsage ?? {}).length > 0)
+      .map((d) => ({ day: d.day, models: d.modelUsage })),
+  };
+}
+
+/**
+ * Merge several projects' model tallies into one range, for the estate view.
+ *
+ * Only the model fields are meaningful on the result; everything else is
+ * carried from the first range so the panel has a shape to read. Days are
+ * merged by date, so a day worked in two projects reports both projects' models.
+ */
+export function mergeModelMetrics(ranges: RangeMetrics[]): RangeMetrics {
+  const base = ranges[0];
+  if (!base) {
+    return aggregateRange('', '', []);
+  }
+
+  const modelUsage: Record<string, { messages: number; credits: number }> = {};
+  const byDay = new Map<string, Record<string, { messages: number; credits: number }>>();
+
+  for (const r of ranges) {
+    for (const [k, v] of Object.entries(r.modelUsage ?? {})) {
+      const row = (modelUsage[k] ??= { messages: 0, credits: 0 });
+      row.messages += v.messages;
+      row.credits += v.credits;
+    }
+    for (const d of r.modelsByDay ?? []) {
+      const day = byDay.get(d.day) ?? {};
+      for (const [k, v] of Object.entries(d.models)) {
+        const row = (day[k] ??= { messages: 0, credits: 0 });
+        row.messages += v.messages;
+        row.credits += v.credits;
+      }
+      byDay.set(d.day, day);
+    }
+  }
+
+  return {
+    ...base,
+    from: ranges.map((r) => r.from).sort()[0],
+    to: ranges.map((r) => r.to).sort().reverse()[0],
+    modelUsage,
+    modelsByDay: [...byDay.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([day, models]) => ({ day, models })),
   };
 }
 
@@ -175,6 +297,45 @@ const METRIC_DEFS: Array<{
   poolable?: (entries: PortfolioEntry[]) => number | null;
 }> = [
   { key: 'cycles', label: 'Cycles', unit: '', dp: 0, pick: (m) => m.cycles },
+  {
+    key: 'credits',
+    label: 'Credits spent',
+    unit: '',
+    dp: 0,
+    pick: (m) => m.credits,
+  },
+  {
+    key: 'creditsPerActiveDay',
+    label: 'Credits per active day',
+    unit: '',
+    dp: 0,
+    pick: (m) => m.creditsPerActiveDay.value,
+    // Pooling divides the estate''s total spend by the estate''s credit-bearing
+    // days, rather than averaging per-project daily averages.
+    poolable: (es) => {
+      const total = sum(
+        es.map((e) => e.metrics.credits).filter((v): v is number => v != null),
+      );
+      const days = sum(es.map((e) => e.metrics.daysWithCredits));
+      return days > 0 ? total / days : null;
+    },
+  },
+  {
+    key: 'creditsPerCycle',
+    label: 'Credits per cycle',
+    unit: '',
+    dp: 1,
+    pick: (m) => m.creditsPerCycle.value,
+    poolable: (es) => {
+      const total = sum(
+        es.map((e) => e.metrics.credits).filter((v): v is number => v != null),
+      );
+      const cycles = sum(
+        es.filter((e) => e.metrics.credits != null).map((e) => e.metrics.cycles),
+      );
+      return cycles > 0 ? total / cycles : null;
+    },
+  },
   {
     key: 'medianCycleMin',
     label: 'Median cycle',
@@ -314,6 +475,10 @@ function poolScalar(key: string, entries: PortfolioEntry[]): number | null {
   switch (key) {
     case 'cycles':
       return sum(ms.map((m) => m.cycles));
+    case 'credits': {
+      const known = ms.map((m) => m.credits).filter((v): v is number => v != null);
+      return known.length ? sum(known) : null;
+    }
     case 'platformErrors':
       return sum(ms.map((m) => m.platformErrors));
     case 'operatorAnswers':

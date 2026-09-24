@@ -40,6 +40,17 @@ function classifyRole(role: string, map: Record<string, RoleClass>): RoleClass {
   return map[key] ?? DEFAULT_ROLE_MAP[key] ?? 'worker';
 }
 
+/**
+ * Sum recorded credits, returning null when none of the events carry them.
+ * Null and zero are different: an export without credit data must not read as
+ * a free day.
+ */
+function sumCredits(events: Array<{ credits: number | null }>): number | null {
+  const known = events.filter((e) => e.credits !== null);
+  if (known.length === 0) return null;
+  return known.reduce((a, e) => a + (e.credits as number), 0);
+}
+
 function excerpt(body: string, n = 180): string {
   const flat = body.replace(/\s+/g, ' ').trim();
   return flat.length > n ? `${flat.slice(0, n)}…` : flat;
@@ -66,6 +77,8 @@ export function runPipeline(text: string, partial: Partial<ParseSettings> = {}):
       body: e.body,
       bodyChars: e.body.length,
       actionCount: e.actionCount,
+      credits: e.credits,
+      model: e.model,
       fingerprint: fingerprintEvent(e.tsUtc.toISOString(), e.role, e.kind, e.body),
       detectedLanguage: det.language,
       languageConfidence: det.confidence,
@@ -79,6 +92,8 @@ export function runPipeline(text: string, partial: Partial<ParseSettings> = {}):
       transcriptRef: scan.transcriptRef,
       declaredRangeText: scan.declaredRangeText,
       declaredMessageCount: scan.declaredMessageCount,
+      declaredCredits: scan.declaredCredits,
+      declaredModels: scan.declaredModels,
       events: [],
       cycles: [],
       operatorTurns: [],
@@ -211,6 +226,7 @@ export function runPipeline(text: string, partial: Partial<ParseSettings> = {}):
       reasoningSteps,
       toolActions,
       operatorAnswers: answers.length,
+      credits: sumCredits([dispatch, ...inner, ...(closeout ? [closeout] : [])]),
       medianStepLatencyS: gaps.length ? median(gaps) : null,
       halted: closeout ? /\bhalt(ed)?\b/i.test(closeout.body.slice(0, 400)) : false,
       authorisationRecorded: Boolean(authorising),
@@ -376,6 +392,8 @@ export function runPipeline(text: string, partial: Partial<ParseSettings> = {}):
     transcriptRef: scan.transcriptRef,
     declaredRangeText: scan.declaredRangeText,
     declaredMessageCount: scan.declaredMessageCount,
+    declaredCredits: scan.declaredCredits,
+    declaredModels: scan.declaredModels,
     events,
     cycles,
     operatorTurns,

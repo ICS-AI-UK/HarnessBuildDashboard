@@ -42,6 +42,16 @@ export type DayMetrics = {
   stepsVsDuration: Stat;
   dispatchCharsMin: number | null;
   dispatchCharsMax: number | null;
+  // Credit spend
+  credits: number | null;
+  declaredCredits: number | null;
+  creditsByRole: Record<string, number>;
+  // Models
+  modelUsage: Record<string, { messages: number; credits: number }>;
+  primaryModel: string | null;
+  creditsPerCycle: Stat;
+  creditsPerStep: Stat;
+  costliestCycle: { tag: string; credits: number } | null;
   // Elapsed day
   elapsed: ElapsedPartition;
   // Interruptions
@@ -64,6 +74,7 @@ export type DayMetrics = {
     dispatchChars: number;
     type: string;
     halted: boolean;
+    credits: number | null;
   }>;
 };
 
@@ -103,6 +114,7 @@ export function computeDayMetrics(slice: DaySlice, ctx: ComputeContext): DayMetr
   const operatorDispatches = turns.filter((t) => t.classification === 'dispatch');
   const operatorTurnTotal = answers.length + operatorDispatches.length;
 
+  const steps = sum(cycles.map((c) => c.reasoningSteps));
   const windowStartDate = slice.firstEventAt ? new Date(slice.firstEventAt) : null;
   const windowEndDate = slice.lastEventAt ? new Date(slice.lastEventAt) : null;
 
@@ -111,7 +123,7 @@ export function computeDayMetrics(slice: DaySlice, ctx: ComputeContext): DayMetr
     activeDays: slice.eventCount > 0 ? 1 : 0,
     cycles: cycles.length,
     openCycles: cycles.filter((c) => c.isOpen).length,
-    reasoningSteps: sum(cycles.map((c) => c.reasoningSteps)),
+    reasoningSteps: steps,
     toolActions: sum(cycles.map((c) => c.toolActions)),
     platformErrors: errors.length,
     windowStart: windowStartDate ? windowStartDate.toISOString() : null,
@@ -138,6 +150,33 @@ export function computeDayMetrics(slice: DaySlice, ctx: ComputeContext): DayMetr
     dispatchCharsMin: cycles.length ? Math.min(...cycles.map((c) => c.dispatchChars)) : null,
     dispatchCharsMax: cycles.length ? Math.max(...cycles.map((c) => c.dispatchChars)) : null,
 
+    credits: slice.credits,
+    declaredCredits: slice.declaredCredits,
+    creditsByRole: slice.creditsByRole ?? {},
+    modelUsage: slice.modelUsage ?? {},
+    // The model that produced the most messages that day.
+    primaryModel: (() => {
+      const rows = Object.entries(slice.modelUsage ?? {});
+      if (rows.length === 0) return null;
+      return rows.reduce((a, b) => (b[1].messages > a[1].messages ? b : a))[0];
+    })(),
+    // Spend per cycle and per step are only meaningful where both are known.
+    creditsPerCycle: stat(
+      slice.credits !== null && cycles.length > 0 ? slice.credits / cycles.length : null,
+      cycles.length,
+      'day credits / cycles',
+    ),
+    creditsPerStep: stat(
+      slice.credits !== null && steps > 0 ? slice.credits / steps : null,
+      steps,
+      'day credits / reasoning steps',
+    ),
+    costliestCycle: (() => {
+      const withCredits = cycles.filter((c) => c.credits !== null);
+      if (withCredits.length === 0) return null;
+      const top = withCredits.reduce((a, b) => ((b.credits as number) > (a.credits as number) ? b : a));
+      return { tag: top.tag, credits: top.credits as number };
+    })(),
     elapsed: computeElapsed(slice, ctx.timezone),
 
     operatorDispatches: operatorDispatches.length,
@@ -166,6 +205,7 @@ export function computeDayMetrics(slice: DaySlice, ctx: ComputeContext): DayMetr
       dispatchChars: c.dispatchChars,
       type: c.cycleType,
       halted: c.halted,
+      credits: c.credits,
     })),
   };
 }

@@ -14,6 +14,10 @@ export type ParsedEvent = {
   body: string;
   bodyChars: number;
   actionCount: number;
+  /** Credits this message cost, or null when the export does not record them. */
+  credits: number | null;
+  /** The model that produced it, or null when the export names none. */
+  model: string | null;
   fingerprint: string;
   detectedLanguage: string | null;
   languageConfidence: number | null;
@@ -34,6 +38,8 @@ export type ParsedCycle = {
   reasoningSteps: number;
   toolActions: number;
   operatorAnswers: number;
+  /** Credits spent between dispatch and close-out, null when not recorded. */
+  credits: number | null;
   medianStepLatencyS: number | null;
   halted: boolean;
   authorisationRecorded: boolean;
@@ -107,6 +113,8 @@ export type ParseResult = {
   transcriptRef: string | null;
   declaredRangeText: string | null;
   declaredMessageCount: number | null;
+  declaredCredits: { total: number | null; byDay: Record<string, number> } | null;
+  declaredModels: Array<{ model: string; messages: number; credits: number }> | null;
   events: ParsedEvent[];
   cycles: ParsedCycle[];
   operatorTurns: ParsedOperatorTurn[];

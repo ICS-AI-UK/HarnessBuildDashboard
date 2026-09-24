@@ -33,6 +33,10 @@ export type Project = {
   answerThreshold: number;
   minCyclesForAverage: number;
   roleMap: Record<string, RoleClass>;
+  /** Credits remaining, as stated by the user, for the burndown (SPEC.md §5.12). */
+  creditBalance: number | null;
+  /** The date that balance was true on; spend from this day onwards reduces it. */
+  creditBalanceAsOf: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -112,6 +116,31 @@ export async function deleteProject(slug: string): Promise<void> {
   const store = await getStore();
   await clearProjectData(slug);
   await store.delete(keys.project(slug));
+}
+
+// --- Account-wide settings ------------------------------------------------
+
+export type PortfolioSettings = {
+  /** A single pool covering every project, for the estate-wide burndown. */
+  creditBalance: number | null;
+  creditBalanceAsOf: string | null;
+  updatedAt: string | null;
+};
+
+const EMPTY_PORTFOLIO: PortfolioSettings = {
+  creditBalance: null,
+  creditBalanceAsOf: null,
+  updatedAt: null,
+};
+
+export async function getPortfolioSettings(): Promise<PortfolioSettings> {
+  const store = await getStore();
+  return (await store.getJSON<PortfolioSettings>(keys.portfolio())) ?? EMPTY_PORTFOLIO;
+}
+
+export async function savePortfolioSettings(settings: PortfolioSettings): Promise<void> {
+  const store = await getStore();
+  await store.setJSON(keys.portfolio(), { ...settings, updatedAt: new Date().toISOString() });
 }
 
 export function settingsFor(project: Project, overrides: Record<number, BoundaryRole> = {}): ParseSettings {

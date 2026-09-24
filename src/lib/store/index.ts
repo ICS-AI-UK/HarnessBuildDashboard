@@ -157,6 +157,9 @@ export const keys = {
   project: (slug: string) => `projects/${slug}.json`,
   projectPrefix: () => 'projects/',
 
+  /** Account-wide settings, currently just the portfolio credit balance. */
+  portfolio: () => 'settings/portfolio.json',
+
   /** Raw transcript text, kept so event-level evidence can be rebuilt. */
   raw: (slug: string, sha: string) => `raw/${slug}/${sha}.md`,
   transcript: (slug: string, sha: string) => `transcripts/${slug}/${sha}.json`,
