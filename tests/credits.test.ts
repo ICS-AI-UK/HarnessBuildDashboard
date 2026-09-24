@@ -258,6 +258,66 @@ describe('credit burndown', () => {
     expect(b.daysRemaining).toBeNull();
   });
 
+  it('takes the rate from recent days, not the whole period', () => {
+    // A rising curve: spend per day climbing an order of magnitude, which is
+    // what a long conversation accumulating context actually looks like.
+    const days = [
+      day('2026-09-01', 1_000),
+      day('2026-09-02', 2_000),
+      day('2026-09-03', 5_000),
+      day('2026-09-04', 20_000),
+      day('2026-09-05', 40_000),
+    ];
+    const b = computeBurndown({
+      balance: 500_000,
+      asOf: '2026-09-01',
+      days,
+      today: '2026-09-05',
+      rateWindowActiveDays: 2,
+    });
+
+    // Last two days: (20k + 40k) / 2 = 30k. The flat average would be 13.6k,
+    // which would promise more than twice the runway that actually remains.
+    expect(b.ratePerActiveDay).toBe(30_000);
+    expect(b.lifetimeRatePerActiveDay).toBeCloseTo(68_000 / 5, 5);
+    expect(b.rateWindowDays).toBe(2);
+    expect(b.rateTrend!).toBeGreaterThan(2);
+
+    const flat = computeBurndown({
+      balance: 500_000,
+      asOf: '2026-09-01',
+      days,
+      today: '2026-09-05',
+      rateWindowActiveDays: 0,
+    });
+    expect(flat.daysRemaining!).toBeGreaterThan(b.daysRemaining!);
+  });
+
+  it('reports a falling rate too', () => {
+    const b = computeBurndown({
+      balance: 100_000,
+      asOf: '2026-09-01',
+      days: [day('2026-09-01', 40_000), day('2026-09-02', 5_000)],
+      today: '2026-09-02',
+      rateWindowActiveDays: 1,
+    });
+    expect(b.ratePerActiveDay).toBe(5_000);
+    expect(b.rateTrend!).toBeLessThan(1);
+  });
+
+  it('falls back to every day when the window is longer than the history', () => {
+    const b = computeBurndown({
+      balance: 10_000,
+      asOf: '2026-09-01',
+      days: [day('2026-09-01', 100), day('2026-09-02', 300)],
+      today: '2026-09-02',
+      rateWindowActiveDays: 30,
+    });
+    expect(b.rateWindowDays).toBe(2);
+    expect(b.ratePerActiveDay).toBe(200);
+    expect(b.rateTrend).toBeCloseTo(1, 5);
+  });
+
   it('runs on the real fixture', () => {
     const r = runPipeline(FIXTURE);
     const days = r.days.map((d) => computeDayMetrics(sliceFromParse(r, d.day), CTX));

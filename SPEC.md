@@ -486,6 +486,13 @@ of two:
 - **Per active day** — what a working day costs.
 - **Per calendar day** — that rate scaled by how often days are worked.
 
+**The rate is taken from the most recent working days, not from all of them** (default: 7).
+Spend per message climbs steeply as a conversation accumulates context — measured at **33x** between
+the first and last day of one six-day build, from 24 to 781 credits a message. Averaging a rising
+curve projects at a rate the team has already left behind, and overstates the runway exactly when the
+balance matters most. The panel reports the recent rate against the lifetime one and says which way
+spend is moving whenever they differ by more than a quarter.
+
 A team spending 7,500 credits on each of nine days in a fortnight is burning ~4,800 a calendar day,
 not 7,500. **Runway is quoted in calendar days**, since that is what a date on a budget means, and
 the working cadence it assumes is stated alongside it.

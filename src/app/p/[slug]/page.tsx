@@ -66,7 +66,7 @@ export default async function ProjectPage({
   // is drawn down by all spend since its date, whatever the dashboard is showing.
   const allDays = await getDayMetrics(slug, span.from, todayKey(project.timezone) > span.to ? todayKey(project.timezone) : span.to);
   const burndown =
-    project.creditBalance !== null && project.creditBalanceAsOf !== null
+    project.creditBalance != null && project.creditBalanceAsOf != null
       ? computeBurndown({
           balance: project.creditBalance,
           asOf: project.creditBalanceAsOf,

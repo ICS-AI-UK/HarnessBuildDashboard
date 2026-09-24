@@ -72,7 +72,7 @@ export default async function PortfolioPage({
   // per day so two projects working the same day count once against the pool.
   const portfolio = await getPortfolioSettings();
   let estateBurndown = null;
-  if (portfolio.creditBalance !== null && portfolio.creditBalanceAsOf !== null) {
+  if (portfolio.creditBalance != null && portfolio.creditBalanceAsOf != null) {
     const today = todayKey();
     const perProject = await Promise.all(
       included.map((e) => getDayMetrics(e.slug, portfolio.creditBalanceAsOf as string, today)),

@@ -69,8 +69,9 @@ export function BurndownPanel({
           note={
             b.ratePerActiveDay === null
               ? undefined
-              : `${fmt(b.ratePerActiveDay, 0)} on a working day`
+              : `${fmt(b.ratePerActiveDay, 0)} on a working day, last ${b.rateWindowDays}`
           }
+          tone={b.rateTrend !== null && b.rateTrend > 1.5 ? 'warn' : 'default'}
         />
         <Figure
           value={b.exhaustionDate ? formatDayLong(b.exhaustionDate) : EMPTY}
@@ -102,9 +103,29 @@ export function BurndownPanel({
         </p>
       )}
 
+      {b.rateTrend !== null && Math.abs(b.rateTrend - 1) > 0.25 && (
+        <p
+          className="mt-4 rounded-md p-2.5 text-[13px]"
+          style={{
+            background: b.rateTrend > 1 ? 'color-mix(in srgb, var(--warn) 12%, transparent)' : 'var(--surface-2)',
+            color: b.rateTrend > 1 ? 'var(--warn)' : 'var(--text-muted)',
+          }}
+        >
+          Spend is {b.rateTrend > 1 ? 'rising' : 'falling'}: the last {b.rateWindowDays} working
+          day{b.rateWindowDays === 1 ? '' : 's'} averaged {fmt(b.ratePerActiveDay, 0)} credits
+          against {fmt(b.lifetimeRatePerActiveDay, 0)} over the whole period &mdash;{' '}
+          {fmt(b.rateTrend, 1)}&times;. The projection uses the recent figure, so it follows the
+          trend rather than the average.
+          {b.rateTrend > 1 && ' A long-running conversation costs more per message as its context grows, so a rising curve is expected rather than alarming.'}
+        </p>
+      )}
+
       <Method>
-        Runway is quoted in calendar days, because that is what a date on a budget means. It assumes
-        the working cadence actually observed:{' '}
+        The rate is taken from the last {b.rateWindowDays} working day
+        {b.rateWindowDays === 1 ? '' : 's'}, not from the whole period, because spend per message
+        climbs as a conversation accumulates context and a flat average would project at a rate
+        already left behind. Runway is quoted in calendar days, because that is what a date on a
+        budget means. It assumes the working cadence actually observed:{' '}
         {b.activeDayDensity === null ? (
           'not yet measurable'
         ) : (

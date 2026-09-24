@@ -75,9 +75,38 @@ export type DayDocument = {
 
 // --- Projects -------------------------------------------------------------
 
+/**
+ * Fill fields added after a document was written.
+ *
+ * Stored projects are long-lived and the shape grows, so a record saved by an
+ * earlier version is simply missing the newer keys. `undefined` is not `null`:
+ * a guard like `x !== null` passes for a missing key and hands the absent value
+ * straight to code that assumed it was there. Every read goes through here so
+ * that cannot happen.
+ */
+function normaliseProject(raw: Partial<Project> & { slug: string }): Project {
+  return {
+    slug: raw.slug,
+    name: raw.name ?? raw.slug,
+    description: raw.description ?? null,
+    colour: raw.colour ?? '#1d4ed8',
+    workingLanguage: raw.workingLanguage ?? 'en',
+    timezone: raw.timezone ?? 'UTC',
+    answerThreshold: raw.answerThreshold ?? 600,
+    minCyclesForAverage: raw.minCyclesForAverage ?? 5,
+    roleMap: raw.roleMap ?? {},
+    creditBalance: raw.creditBalance ?? null,
+    creditBalanceAsOf: raw.creditBalanceAsOf ?? null,
+    archivedAt: raw.archivedAt ?? null,
+    createdAt: raw.createdAt ?? new Date(0).toISOString(),
+    updatedAt: raw.updatedAt ?? new Date(0).toISOString(),
+  };
+}
+
 export async function getProject(slug: string): Promise<Project | null> {
   const store = await getStore();
-  return store.getJSON<Project>(keys.project(slug));
+  const raw = await store.getJSON<Project>(keys.project(slug));
+  return raw ? normaliseProject(raw) : null;
 }
 
 export async function saveProject(project: Project): Promise<void> {
@@ -88,9 +117,9 @@ export async function saveProject(project: Project): Promise<void> {
 export async function listProjects(includeArchived = false): Promise<Project[]> {
   const store = await getStore();
   const ks = await store.list(keys.projectPrefix());
-  const projects = (await Promise.all(ks.map((k) => store.getJSON<Project>(k)))).filter(
-    (p): p is Project => p !== null,
-  );
+  const projects = (await Promise.all(ks.map((k) => store.getJSON<Project>(k))))
+    .filter((p): p is Project => p !== null)
+    .map(normaliseProject);
   return projects
     .filter((p) => includeArchived || !p.archivedAt)
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -135,7 +164,14 @@ const EMPTY_PORTFOLIO: PortfolioSettings = {
 
 export async function getPortfolioSettings(): Promise<PortfolioSettings> {
   const store = await getStore();
-  return (await store.getJSON<PortfolioSettings>(keys.portfolio())) ?? EMPTY_PORTFOLIO;
+  const raw = await store.getJSON<PortfolioSettings>(keys.portfolio());
+  if (!raw) return EMPTY_PORTFOLIO;
+  // Same reasoning as normaliseProject: a missing key must read as null.
+  return {
+    creditBalance: raw.creditBalance ?? null,
+    creditBalanceAsOf: raw.creditBalanceAsOf ?? null,
+    updatedAt: raw.updatedAt ?? null,
+  };
 }
 
 export async function savePortfolioSettings(settings: PortfolioSettings): Promise<void> {
